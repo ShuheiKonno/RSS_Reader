@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>RSS Reader offscreen parser</title>
+  </head>
+  <body>
+    <!-- Service Worker には DOMParser が無いため、XML 解析だけをこの不可視ページで行う -->
+    <script type="module" src="offscreen.js"></script>
+  </body>
+</html>

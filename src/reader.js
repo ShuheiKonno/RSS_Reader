@@ -5,17 +5,31 @@ import { applyQuery, highlightTerms } from './lib/query.js';
 import { parseWithDom, refreshFeed } from './lib/refresh.js';
 import { sanitizeHtml, toPlainText } from './lib/sanitize.js';
 import {
+  checkAvailability,
+  createTranslatorPool,
+  isTranslatorSupported,
+  needsTranslation,
+  translateItems,
+  TARGET_LANG,
+} from './lib/translate.js';
+import {
   addFeed,
   addFilter,
+  addGlossaryEntry,
+  clearTranslations,
   countUnread,
   getState,
   markAllRead,
   removeFeed,
   removeFilter,
+  removeGlossaryEntry,
   renameFeed,
   setRead,
+  saveTranslations,
   updateFilter,
+  updateGlossaryEntry,
   updateSettings,
+  updateTranslationSettings,
 } from './lib/store.js';
 
 const ALL_FEEDS = 'all';
@@ -36,26 +50,50 @@ const el = {
   unreadOnly: document.getElementById('unread-only'),
   autoMarkRead: document.getElementById('auto-mark-read'),
   sortOrder: document.getElementById('sort-order'),
+  translateVisible: document.getElementById('translate-visible'),
   markAllRead: document.getElementById('mark-all-read'),
   listStatus: document.getElementById('list-status'),
   itemList: document.getElementById('item-list'),
   previewEmpty: document.getElementById('preview-empty'),
   previewArticle: document.getElementById('preview-article'),
   previewTitle: document.getElementById('preview-title'),
+  previewTitleOriginal: document.getElementById('preview-title-original'),
   previewMeta: document.getElementById('preview-meta'),
   previewLink: document.getElementById('preview-link'),
   previewBody: document.getElementById('preview-body'),
+  previewTranslation: document.getElementById('preview-translation'),
+  previewTranslationSummary: document.getElementById('preview-translation-summary'),
   toggleRead: document.getElementById('toggle-read'),
+  translateItem: document.getElementById('translate-item'),
+  translateEnabled: document.getElementById('translate-enabled'),
+  translateAuto: document.getElementById('translate-auto'),
+  translateShowOriginal: document.getElementById('translate-show-original'),
+  translateStatus: document.getElementById('translate-status'),
+  translatePrepare: document.getElementById('translate-prepare'),
+  addGlossaryForm: document.getElementById('add-glossary-form'),
+  glossarySource: document.getElementById('glossary-source'),
+  glossaryTarget: document.getElementById('glossary-target'),
+  addGlossaryMessage: document.getElementById('add-glossary-message'),
+  glossaryList: document.getElementById('glossary-list'),
+  retranslateAll: document.getElementById('retranslate-all'),
 };
 
 /** 画面状態。state.data はストレージのスナップショット。 */
 const state = {
-  data: { feeds: [], items: {}, filters: [], settings: {} },
+  data: { feeds: [], items: {}, filters: [], glossary: [], settings: {} },
   selectedFeedId: ALL_FEEDS,
   selectedItemId: null,
   search: '',
   visible: [],
   refreshingFeedIds: new Set(),
+  // 翻訳中フラグ。訳文の保存自体が storage の変更通知を起こすので、
+  // 再入して同じ記事を訳し直さないようにこれで塞ぐ
+  translating: false,
+  translateStatus: '',
+  // 内蔵翻訳の利用可否 ('available' | 'downloadable' | 'downloading' | 'unavailable')
+  translatorAvailability: 'unavailable',
+  // 自動翻訳で一度試した記事。失敗した記事を無限に訳し直さないための歯止め
+  autoTranslateAttempted: new Set(),
 };
 
 let autoMarkReadTimer = null;
@@ -139,6 +177,42 @@ function scopedItems() {
   const { items } = state.data;
   if (state.selectedFeedId === ALL_FEEDS) return Object.values(items).flat();
   return items[state.selectedFeedId] || [];
+}
+
+/** 一覧に載せる長さへ切り詰める。 */
+function clip(text, limit) {
+  const flat = (text || '').trim();
+  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
+}
+
+// --------------------------------------------------------------- 翻訳の表示
+
+function translationSettings() {
+  return state.data.settings.translation || {};
+}
+
+/** 翻訳表示が有効で、その記事に訳文があるか。 */
+function isTranslated(item) {
+  return Boolean(translationSettings().enabled && (item.titleJa || item.summaryJa));
+}
+
+/**
+ * 主表示に使う文字列と、併記する原文を返す。
+ * 訳が無い / 翻訳表示が OFF のときは原文だけを主表示にする。
+ */
+function displayTitle(item) {
+  const original = item.title || '(タイトルなし)';
+  if (!isTranslated(item) || !item.titleJa) return { text: original, original: '' };
+  return { text: item.titleJa, original: translationSettings().showOriginal ? original : '' };
+}
+
+/**
+ * 一覧の要約に出す文字列。
+ * 原文は詳細側の本文で読めるので、要約は原文を併記せず訳文に置き換える。
+ */
+function displaySummary(item, limit = 160) {
+  if (isTranslated(item) && item.summaryJa) return clip(item.summaryJa, limit);
+  return toPlainText(item.summary || item.content, limit);
 }
 
 // -------------------------------------------------------------------- render
@@ -322,9 +396,18 @@ function renderList() {
     const main = document.createElement('div');
     main.className = 'item-main';
 
+    const titleText = displayTitle(item);
     const title = document.createElement('p');
     title.className = 'item-title';
-    title.append(highlighted(item.title || '(タイトルなし)', terms));
+    title.append(highlighted(titleText.text, terms));
+    main.append(title);
+
+    if (titleText.original) {
+      const original = document.createElement('p');
+      original.className = 'item-title-original';
+      original.append(highlighted(titleText.original, terms));
+      main.append(original);
+    }
 
     const meta = document.createElement('p');
     meta.className = 'item-meta';
@@ -335,12 +418,19 @@ function renderList() {
     time.textContent = relativeTime(item.published);
     time.title = absoluteTime(item.published);
     meta.append(source, document.createTextNode(' ・ '), time);
+    if (isTranslated(item)) {
+      const flag = document.createElement('span');
+      flag.className = 'translated-flag';
+      flag.textContent = '訳';
+      flag.title = '日本語に翻訳済み';
+      meta.append(document.createTextNode(' '), flag);
+    }
+    main.append(meta);
 
     const summary = document.createElement('p');
     summary.className = 'item-summary';
-    summary.append(highlighted(toPlainText(item.summary || item.content, 160), terms));
-
-    main.append(title, meta, summary);
+    summary.append(highlighted(displaySummary(item), terms));
+    main.append(summary);
 
     const openLink = document.createElement('a');
     openLink.className = 'item-open';
@@ -387,7 +477,10 @@ function renderPreview() {
   el.previewEmpty.hidden = true;
   el.previewArticle.hidden = false;
 
-  el.previewTitle.textContent = item.title || '(タイトルなし)';
+  const titleText = displayTitle(item);
+  el.previewTitle.textContent = titleText.text;
+  el.previewTitleOriginal.textContent = titleText.original;
+  el.previewTitleOriginal.hidden = !titleText.original;
   if (item.link) {
     el.previewTitle.href = item.link;
     el.previewLink.href = item.link;
@@ -402,6 +495,14 @@ function renderPreview() {
   el.previewMeta.textContent = metaParts.join(' ・ ');
 
   el.toggleRead.textContent = item.read ? '未読にする' : '既読にする';
+
+  const translatedSummary = isTranslated(item) ? item.summaryJa : '';
+  el.previewTranslationSummary.textContent = translatedSummary;
+  el.previewTranslation.hidden = !translatedSummary;
+  // 翻訳表示が ON で、その記事にまだ訳が無いときだけ個別翻訳を出す
+  el.translateItem.hidden = !(
+    translationSettings().enabled && isTranslatorSupported() && needsTranslation(item)
+  );
 
   // 同じ記事を再描画するときは本文とスクロール位置をそのまま残す
   if (renderedPreviewId === item.id) return;
@@ -420,12 +521,95 @@ function renderPreview() {
   el.previewBody.scrollTop = 0;
 }
 
+function renderGlossary() {
+  el.glossaryList.replaceChildren();
+  if (state.data.glossary.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'filter-empty';
+    empty.textContent = '用語は未登録です。';
+    el.glossaryList.append(empty);
+    return;
+  }
+  for (const entry of state.data.glossary) {
+    const row = document.createElement('li');
+    row.className = 'glossary-row';
+
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = entry.enabled !== false;
+    toggle.title = '有効 / 無効';
+    toggle.addEventListener('change', async () => {
+      await updateGlossaryEntry(entry.id, { enabled: toggle.checked });
+    });
+
+    const pair = document.createElement('span');
+    pair.className = 'glossary-pair';
+    if (entry.enabled === false) pair.classList.add('disabled');
+    const source = document.createElement('span');
+    source.className = 'glossary-source';
+    source.textContent = entry.source;
+    const target = document.createElement('span');
+    target.className = 'glossary-target';
+    target.textContent = entry.target;
+    pair.append(source, document.createTextNode(' → '), target);
+
+    row.append(
+      toggle,
+      pair,
+      iconButton('✕', 'この用語を削除', () => removeGlossaryEntry(entry.id))
+    );
+    el.glossaryList.append(row);
+  }
+}
+
+/** 翻訳セクションのチェックボックス・状態表示・準備ボタンを描画する。 */
+function renderTranslationPanel() {
+  const settings = translationSettings();
+  el.translateEnabled.checked = Boolean(settings.enabled);
+  el.translateAuto.checked = Boolean(settings.auto);
+  el.translateShowOriginal.checked = Boolean(settings.showOriginal);
+  el.translateAuto.disabled = !settings.enabled;
+  el.translateShowOriginal.disabled = !settings.enabled;
+
+  const supported = isTranslatorSupported();
+  el.translateVisible.hidden = !(settings.enabled && supported);
+  el.translatePrepare.hidden = !(
+    settings.enabled && supported && state.translatorAvailability === 'downloadable'
+  );
+
+  if (!supported) {
+    el.translateStatus.textContent =
+      'この Chrome では内蔵翻訳を利用できません（Chrome 138 以降が必要です）。';
+    el.translateStatus.hidden = false;
+    return;
+  }
+  if (state.translateStatus) {
+    el.translateStatus.textContent = state.translateStatus;
+    el.translateStatus.hidden = false;
+    return;
+  }
+  if (!settings.enabled) {
+    el.translateStatus.hidden = true;
+    return;
+  }
+  const notes = {
+    downloadable: '翻訳モデルが未取得です。「翻訳モデルを準備」を押してください。',
+    downloading: '翻訳モデルを取得しています…',
+    unavailable: 'この端末では英語→日本語の翻訳モデルを利用できません。',
+    available: '端末内で翻訳します（外部への送信はありません）。',
+  };
+  el.translateStatus.textContent = notes[state.translatorAvailability] || '';
+  el.translateStatus.hidden = !el.translateStatus.textContent;
+}
+
 function renderAll() {
   el.unreadOnly.checked = Boolean(state.data.settings.unreadOnly);
   el.autoMarkRead.checked = Boolean(state.data.settings.autoMarkRead);
   el.sortOrder.value = state.data.settings.sortOrder || 'newest';
   renderFeeds();
   renderFilters();
+  renderGlossary();
+  renderTranslationPanel();
   renderList();
   renderPreview();
 }
@@ -491,6 +675,7 @@ async function refreshOne(feed) {
   } finally {
     state.refreshingFeedIds.delete(feed.id);
     await reload();
+    await maybeAutoTranslate();
   }
 }
 
@@ -517,7 +702,112 @@ async function refreshAllFeeds() {
     el.refreshAll.disabled = false;
     el.refreshAll.textContent = '更新';
     await reload();
+    await maybeAutoTranslate();
   }
+}
+
+// ------------------------------------------------------------------- 翻訳
+
+// 言語ペアごとの可否は記事を訳すまで分からないので、代表として英語→日本語で判定する。
+// 実際の翻訳は記事ごとに判定した言語で translator を作る。
+const REPRESENTATIVE_SOURCE_LANG = 'en';
+
+function setTranslateStatus(text) {
+  state.translateStatus = text;
+  renderTranslationPanel();
+}
+
+async function refreshTranslatorAvailability() {
+  state.translatorAvailability = await checkAvailability(REPRESENTATIVE_SOURCE_LANG, TARGET_LANG);
+  renderTranslationPanel();
+}
+
+/**
+ * 言語モデルの取得はユーザー操作を求められることがあるため、
+ * ボタン (＝明示的な操作) からだけ実行する。
+ */
+async function prepareTranslationModel() {
+  el.translatePrepare.disabled = true;
+  setTranslateStatus('翻訳モデルを準備しています…');
+  const pool = createTranslatorPool({
+    onDownloadProgress: ({ loaded }) => {
+      setTranslateStatus(`翻訳モデルを取得中… ${Math.round((loaded || 0) * 100)}%`);
+    },
+  });
+  try {
+    await pool.get(REPRESENTATIVE_SOURCE_LANG, TARGET_LANG);
+    setTranslateStatus('翻訳モデルの準備ができました。');
+  } catch (error) {
+    setTranslateStatus(`翻訳モデルを準備できませんでした: ${error.message}`);
+  } finally {
+    await pool.close();
+    el.translatePrepare.disabled = false;
+    await refreshTranslatorAvailability();
+  }
+}
+
+/** 記事をまとめて翻訳して保存する。多重起動は state.translating で塞ぐ。 */
+async function runTranslation(items) {
+  if (state.translating) return;
+  // 取得中は mergeItems と書き込みがぶつかるので待ってもらう
+  if (state.refreshingFeedIds.size > 0) {
+    setTranslateStatus('フィードの取得が終わってから翻訳してください。');
+    return;
+  }
+  const targets = items.filter(needsTranslation);
+  if (targets.length === 0) {
+    setTranslateStatus('翻訳が必要な記事はありません。');
+    return;
+  }
+
+  state.translating = true;
+  el.translateVisible.disabled = true;
+  el.translateItem.disabled = true;
+  setTranslateStatus(`翻訳しています… 0 / ${targets.length} 件`);
+  try {
+    const { results, failed, error } = await translateItems(targets, {
+      glossary: state.data.glossary,
+      skipSameLanguage: translationSettings().skipSameLanguage !== false,
+      onProgress: ({ done, total, phase, loaded }) => {
+        if (phase === 'download') {
+          setTranslateStatus(`翻訳モデルを取得中… ${Math.round((loaded || 0) * 100)}%`);
+        } else if (phase === 'translate') {
+          setTranslateStatus(`翻訳しています… ${done} / ${total} 件`);
+        }
+      },
+    });
+    if (error) {
+      setTranslateStatus(error);
+      return;
+    }
+    const saved = await saveTranslations(results);
+    setTranslateStatus(
+      failed > 0 ? `${saved} 件を翻訳しました（${failed} 件は失敗）。` : `${saved} 件を翻訳しました。`
+    );
+  } catch (error) {
+    setTranslateStatus(`翻訳に失敗しました: ${error.message}`);
+  } finally {
+    state.translating = false;
+    el.translateVisible.disabled = false;
+    el.translateItem.disabled = false;
+    await reload();
+  }
+}
+
+/** 自動翻訳。モデルが手元にあるときだけ走らせ、失敗した記事は繰り返さない。 */
+async function maybeAutoTranslate() {
+  const { enabled, auto, maxAutoItems } = translationSettings();
+  if (!enabled || !auto || state.translating) return;
+  if (state.refreshingFeedIds.size > 0) return;
+  if (!isTranslatorSupported() || state.translatorAvailability !== 'available') return;
+
+  const targets = Object.values(state.data.items)
+    .flat()
+    .filter((item) => needsTranslation(item) && !state.autoTranslateAttempted.has(item.id))
+    .slice(0, maxAutoItems || 60);
+  if (targets.length === 0) return;
+  for (const item of targets) state.autoTranslateAttempted.add(item.id);
+  await runTranslation(targets);
 }
 
 async function deleteFeed(feed) {
@@ -576,8 +866,55 @@ el.addFilterForm.addEventListener('submit', async (event) => {
   }
 });
 
+el.addGlossaryForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  showMessage(el.addGlossaryMessage, '');
+  try {
+    await addGlossaryEntry(el.glossarySource.value, el.glossaryTarget.value);
+    el.glossarySource.value = '';
+    el.glossaryTarget.value = '';
+  } catch (error) {
+    showMessage(el.addGlossaryMessage, error.message, true);
+  }
+});
+
 el.refreshAll.addEventListener('click', refreshAllFeeds);
 el.markAllRead.addEventListener('click', markVisibleRead);
+
+el.translateVisible.addEventListener('click', () => runTranslation(state.visible));
+
+el.translateItem.addEventListener('click', () => {
+  const item = state.selectedItemId ? findItem(state.selectedItemId) : null;
+  if (item) runTranslation([item]);
+});
+
+el.translatePrepare.addEventListener('click', prepareTranslationModel);
+
+el.translateEnabled.addEventListener('change', async () => {
+  // 先に値を読む。setTranslateStatus は保存前の state で再描画してチェックを戻してしまうため、
+  // ここでは state を直接触るだけにする
+  const enabled = el.translateEnabled.checked;
+  state.translateStatus = '';
+  await updateTranslationSettings({ enabled });
+  if (enabled) await refreshTranslatorAvailability();
+});
+
+el.translateAuto.addEventListener('change', async () => {
+  await updateTranslationSettings({ auto: el.translateAuto.checked });
+  await maybeAutoTranslate();
+});
+
+el.translateShowOriginal.addEventListener('change', async () => {
+  await updateTranslationSettings({ showOriginal: el.translateShowOriginal.checked });
+});
+
+el.retranslateAll.addEventListener('click', async () => {
+  if (!confirm('保存済みの訳文をすべて破棄します。よろしいですか？')) return;
+  state.autoTranslateAttempted.clear();
+  setTranslateStatus('');
+  await clearTranslations();
+  await reload();
+});
 
 let searchTimer = null;
 el.search.addEventListener('input', () => {
@@ -606,9 +943,15 @@ el.toggleRead.addEventListener('click', () => {
 });
 
 // バックグラウンド更新や他タブの操作を即座に反映する
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
-  if (changes.feeds || changes.items || changes.filters || changes.settings) reload();
+  if (!(changes.feeds || changes.items || changes.filters || changes.glossary || changes.settings)) {
+    return;
+  }
+  await reload();
+  // バックグラウンド更新で入った記事もここで拾う (訳文の保存自体でも発火するが、
+  // 翻訳済みの記事は needsTranslation に弾かれるので繰り返しにはならない)
+  if (changes.items) await maybeAutoTranslate();
 });
 
 // キーボード操作
@@ -650,4 +993,8 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-reload();
+(async () => {
+  await reload();
+  await refreshTranslatorAvailability();
+  await maybeAutoTranslate();
+})();

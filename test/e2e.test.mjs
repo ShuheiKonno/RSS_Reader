@@ -319,6 +319,43 @@ try {
   await page.keyboard.press('/');
   check('/ キーで検索にフォーカスする', await page.evaluate(() => document.activeElement.id === 'search'));
 
+  // --- 翻訳 UI ---
+  // Playwright の Chromium には端末内翻訳モデルが無い想定なので、実翻訳ではなく
+  // UI が描画され、未対応環境でも他の機能を壊さないことを確認する。
+  await page.click('#translate-enabled');
+  await page.waitForFunction(() => !document.querySelector('#translate-status').hidden);
+  const translatorSupported = await page.evaluate(() => typeof Translator !== 'undefined');
+  const translateStatus = await page.textContent('#translate-status');
+  check(
+    '翻訳の状態が表示される',
+    translatorSupported ? translateStatus.length > 0 : translateStatus.includes('Chrome 138'),
+    `Translator=${translatorSupported} status=${translateStatus}`
+  );
+  check(
+    '内蔵翻訳が無くても記事一覧は表示されたまま',
+    (await page.$$('.item-row')).length === 3
+  );
+
+  // --- 用語集 ---
+  await page.fill('#glossary-source', 'pull request');
+  await page.fill('#glossary-target', 'プルリクエスト');
+  await page.click('#add-glossary-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelectorAll('.glossary-row').length === 1);
+  check('用語集に登録できる', (await page.textContent('.glossary-row')).includes('プルリクエスト'));
+
+  await page.fill('#glossary-source', 'Pull Request');
+  await page.fill('#glossary-target', 'べつの訳');
+  await page.click('#add-glossary-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#add-glossary-message').hidden);
+  check(
+    '同じ原語は重複登録できない',
+    (await page.textContent('#add-glossary-message')).includes('既に登録')
+  );
+
+  await page.click('.glossary-row .icon-btn');
+  await page.waitForFunction(() => document.querySelectorAll('.glossary-row').length === 0);
+  check('用語集から削除できる', true);
+
   await page.screenshot({ path: path.join(SHOT, 'reader.png') });
 
   check('ページ内 JS エラーが無い', pageErrors.length === 0, pageErrors.join('\n'));

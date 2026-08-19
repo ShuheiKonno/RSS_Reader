@@ -348,6 +348,111 @@ mark {
   padding: 2px 4px;
 }
 
+/* ---------------------------------------------------------------- 翻訳 */
+
+.translation {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+.translation h2,
+.translation h3 {
+  font-size: 12px;
+  text-transform: none;
+  color: var(--text-muted);
+  margin: 0 12px 6px;
+}
+
+.translation h3 {
+  margin-top: 12px;
+}
+
+.translation .check {
+  padding: 2px 12px;
+  font-size: 12px;
+}
+
+.hint-inline {
+  margin: 0 12px 6px;
+  line-height: 1.5;
+}
+
+.hint-inline code {
+  background: var(--surface-alt);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.translate-status {
+  margin: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+#translate-prepare,
+#retranslate-all {
+  margin: 0 12px 4px;
+}
+
+.btn-quiet {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.add-glossary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px 6px;
+}
+
+.add-glossary input {
+  flex: 1;
+  min-width: 0;
+}
+
+.glossary-arrow {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.glossary-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 12px;
+}
+
+.glossary-pair {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glossary-pair.disabled {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.glossary-target {
+  color: var(--accent);
+}
+
+/* 翻訳済みであることを示す小さなバッジ */
+.translated-flag {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* -------------------------------------------------------------- 記事一覧 */
 
 .list-pane {
@@ -445,9 +550,19 @@ mark {
 }
 
 .item-title,
+.item-title-original,
 .item-meta,
 .item-summary {
   margin: 0;
+}
+
+/* 翻訳表示時に併記する原文タイトル */
+.item-title-original {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .item-title {
@@ -525,10 +640,38 @@ mark {
   text-decoration: underline;
 }
 
+.preview-title-original {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
 .preview-meta {
   margin: 6px 0 12px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.preview-translation {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.preview-translation-head {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.preview-translation p {
+  margin: 0;
+  line-height: 1.7;
 }
 
 .preview-actions {

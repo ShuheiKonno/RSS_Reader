@@ -237,12 +237,18 @@ export function translationSource(item) {
   };
 }
 
+/** 翻訳にかけられる原文を持っているか (訳し直しの可否はこちらで判断する)。 */
+export function hasTranslatableSource(item) {
+  if (!item) return false;
+  return Boolean((item.title || '').trim() || (item.summary || item.content || '').trim());
+}
+
 /** その記事がまだ翻訳されていないか。 */
 export function needsTranslation(item) {
   if (!item) return false;
   // translatedAt は「日本語なので訳さなかった」記事にも入るので、これだけ見れば足りる
   if (item.translatedAt) return false;
-  return Boolean((item.title || '').trim() || (item.summary || item.content || '').trim());
+  return hasTranslatableSource(item);
 }
 
 /**

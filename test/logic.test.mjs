@@ -653,6 +653,37 @@ await checkAsync('translateItems: 1 件失敗しても残りを続行する', as
   assert.deepEqual(results.map((r) => r.itemId), ['i2']);
 });
 
+check('needsTranslation と hasTranslatableSource の使い分け', () => {
+  const untranslated = { title: 'Hello', summary: '' };
+  const translated = { title: 'Hello', summary: '', titleJa: 'こんにちは', translatedAt: Date.now() };
+  const empty = { title: '  ', summary: '', content: '' };
+
+  // 一括翻訳は未翻訳のものだけを拾う
+  assert.equal(translate.needsTranslation(untranslated), true);
+  assert.equal(translate.needsTranslation(translated), false);
+  assert.equal(translate.needsTranslation(empty), false);
+
+  // 訳し直し (force) は翻訳済みでも対象にする。原文が空のものだけ除く
+  assert.equal(translate.hasTranslatableSource(untranslated), true);
+  assert.equal(translate.hasTranslatableSource(translated), true);
+  assert.equal(translate.hasTranslatableSource(empty), false);
+});
+
+await checkAsync('translateItems: 翻訳済みの記事も渡せば訳し直せる', async () => {
+  // 用語集を足したあとに訳し直すと、新しい訳語が反映される
+  stubTranslator({ translateFn: (text) => text });
+  const item = {
+    id: 'i1',
+    feedId: 'f1',
+    title: 'Reviewing a pull request',
+    summary: '',
+    titleJa: '古い訳',
+    translatedAt: Date.now(),
+  };
+  const { results } = await translate.translateItems([item], { glossary: GLOSSARY });
+  assert.equal(results[0].titleJa, 'Reviewing a プルリクエスト');
+});
+
 await checkAsync('Translator API が無い環境では理由を返して落ちない', async () => {
   delete globalThis.Translator;
   delete globalThis.LanguageDetector;

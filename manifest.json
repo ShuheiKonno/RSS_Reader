@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "RSS Reader",
+  "version": "1.0.0",
+  "description": "検索・キーワードフィルタ・未読既読管理に対応した軽量 RSS/Atom リーダー",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "alarms", "offscreen", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "RSS Reader を開く",
+    "default_icon": {
+      "16": "src/icons/icon16.png",
+      "32": "src/icons/icon32.png",
+      "48": "src/icons/icon48.png",
+      "128": "src/icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "src/icons/icon16.png",
+    "32": "src/icons/icon32.png",
+    "48": "src/icons/icon48.png",
+    "128": "src/icons/icon128.png"
+  }
+}

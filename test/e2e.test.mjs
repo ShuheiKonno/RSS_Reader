@@ -336,6 +336,48 @@ try {
     (await page.$$('.item-row')).length === 3
   );
 
+  // --- 記事ごとの翻訳 / 訳し直し ---
+  await page.click('.item-row >> nth=0');
+  await page.waitForFunction(() => !document.querySelector('#translate-item').hidden);
+  check(
+    '未翻訳の記事では「この記事を翻訳」が出る',
+    (await page.textContent('#translate-item')).includes('この記事を翻訳')
+  );
+
+  // 訳文を持つ状態を作り、ボタンが「訳し直す」に変わることを確認する
+  // (この Chromium には翻訳モデルが無いため、訳文は storage に直接書いて再現する)
+  const selectedId = await page.evaluate(() =>
+    document.querySelector('.item-row.selected').dataset.itemId
+  );
+  await page.evaluate(async (itemId) => {
+    const { items } = await chrome.storage.local.get('items');
+    for (const list of Object.values(items)) {
+      for (const item of list) {
+        if (item.id !== itemId) continue;
+        item.titleJa = 'テスト用の訳';
+        item.summaryJa = 'テスト用の概要';
+        item.sourceLang = 'en';
+        item.translatedAt = Date.now();
+      }
+    }
+    await chrome.storage.local.set({ items });
+  }, selectedId);
+  await page.waitForFunction(
+    () => document.querySelector('#translate-item').textContent.includes('訳し直す'),
+    null,
+    { timeout: 15000 }
+  );
+  check('翻訳済みの記事では「訳し直す」に変わる', true);
+  check(
+    '訳文が主表示になり原文が併記される',
+    (await page.textContent('#preview-title')).includes('テスト用の訳') &&
+      !(await page.$eval('#preview-title-original', (node) => node.hidden))
+  );
+  check(
+    '日本語概要が表示される',
+    (await page.textContent('#preview-translation-summary')).includes('テスト用の概要')
+  );
+
   // --- 用語集 ---
   await page.fill('#glossary-source', 'pull request');
   await page.fill('#glossary-target', 'プルリクエスト');

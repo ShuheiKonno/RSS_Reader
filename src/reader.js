@@ -7,6 +7,7 @@ import { sanitizeHtml, toPlainText } from './lib/sanitize.js';
 import {
   checkAvailability,
   createTranslatorPool,
+  hasTranslatableSource,
   isTranslatorSupported,
   needsTranslation,
   translateItems,
@@ -499,10 +500,17 @@ function renderPreview() {
   const translatedSummary = isTranslated(item) ? item.summaryJa : '';
   el.previewTranslationSummary.textContent = translatedSummary;
   el.previewTranslation.hidden = !translatedSummary;
-  // 翻訳表示が ON で、その記事にまだ訳が無いときだけ個別翻訳を出す
+
+  // 翻訳表示が ON なら常に出す。翻訳済みの記事では「訳し直す」に変わり、
+  // 用語集を直したあとにその記事だけ訳し直せるようにする
   el.translateItem.hidden = !(
-    translationSettings().enabled && isTranslatorSupported() && needsTranslation(item)
+    translationSettings().enabled && isTranslatorSupported() && hasTranslatableSource(item)
   );
+  const untranslated = needsTranslation(item);
+  el.translateItem.textContent = untranslated ? 'この記事を翻訳' : '訳し直す';
+  el.translateItem.title = untranslated
+    ? 'この記事を日本語に翻訳します'
+    : '保存済みの訳文を捨てて、いまの用語集で翻訳し直します';
 
   // 同じ記事を再描画するときは本文とスクロール位置をそのまま残す
   if (renderedPreviewId === item.id) return;
@@ -746,15 +754,19 @@ async function prepareTranslationModel() {
   }
 }
 
-/** 記事をまとめて翻訳して保存する。多重起動は state.translating で塞ぐ。 */
-async function runTranslation(items) {
+/**
+ * 記事をまとめて翻訳して保存する。多重起動は state.translating で塞ぐ。
+ * @param {Array<object>} items 対象記事
+ * @param {{force?: boolean}} [options] force を立てると翻訳済みの記事も訳し直す
+ */
+async function runTranslation(items, { force = false } = {}) {
   if (state.translating) return;
   // 取得中は mergeItems と書き込みがぶつかるので待ってもらう
   if (state.refreshingFeedIds.size > 0) {
     setTranslateStatus('フィードの取得が終わってから翻訳してください。');
     return;
   }
-  const targets = items.filter(needsTranslation);
+  const targets = items.filter(force ? hasTranslatableSource : needsTranslation);
   if (targets.length === 0) {
     setTranslateStatus('翻訳が必要な記事はありません。');
     return;
@@ -885,7 +897,8 @@ el.translateVisible.addEventListener('click', () => runTranslation(state.visible
 
 el.translateItem.addEventListener('click', () => {
   const item = state.selectedItemId ? findItem(state.selectedItemId) : null;
-  if (item) runTranslation([item]);
+  // 翻訳済みでも押せるボタンなので、常に訳し直しとして実行する
+  if (item) runTranslation([item], { force: true });
 });
 
 el.translatePrepare.addEventListener('click', prepareTranslationModel);

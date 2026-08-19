@@ -9,9 +9,9 @@ export function parseQuery(input) {
     .filter(Boolean);
 }
 
-/** 記事から検索対象の文字列を作る。 */
+/** 記事から検索対象の文字列を作る。訳文も含めるので日本語でも検索できる。 */
 function haystack(item, feedTitle) {
-  return [item.title, item.summary, item.content, item.author, feedTitle]
+  return [item.title, item.titleJa, item.summary, item.summaryJa, item.content, item.author, feedTitle]
     .filter(Boolean)
     .join('\n')
     .toLowerCase();
@@ -19,7 +19,10 @@ function haystack(item, feedTitle) {
 
 /** キーワードフィルタの照合対象はタイトルと要約 (本文全文は誤爆しやすいため除く)。 */
 function filterTarget(item) {
-  return [item.title, item.summary].filter(Boolean).join('\n').toLowerCase();
+  return [item.title, item.titleJa, item.summary, item.summaryJa]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase();
 }
 
 /**

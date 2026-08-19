@@ -1,6 +1,16 @@
 // chrome.storage.local のスキーマとアクセサ。
 // 記事は feedId ごとの配列で保持し、記事 ID で重複排除して既読状態を引き継ぐ。
 
+/** 翻訳まわりの既定値。settings.translation として入れ子で保存する。 */
+export const DEFAULT_TRANSLATION = {
+  enabled: false,
+  auto: false,
+  showOriginal: true,
+  skipSameLanguage: true,
+  // 自動翻訳が一度に処理する上限 (更新直後に大量の記事を抱えても画面を塞がないため)
+  maxAutoItems: 60,
+};
+
 export const DEFAULT_SETTINGS = {
   refreshMinutes: 30,
   autoMarkRead: true,
@@ -8,9 +18,19 @@ export const DEFAULT_SETTINGS = {
   sortOrder: 'newest',
   itemsPerFeed: 200,
   retentionDays: 30,
+  translation: DEFAULT_TRANSLATION,
 };
 
-const KEYS = ['feeds', 'items', 'filters', 'settings'];
+const KEYS = ['feeds', 'items', 'filters', 'glossary', 'settings'];
+
+/** settings の展開は浅いので、入れ子の translation だけ個別に埋める。 */
+function withSettingDefaults(settings) {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(settings || {}),
+    translation: { ...DEFAULT_TRANSLATION, ...((settings && settings.translation) || {}) },
+  };
+}
 
 function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -23,19 +43,26 @@ export async function getState() {
     feeds: Array.isArray(raw.feeds) ? raw.feeds : [],
     items: raw.items && typeof raw.items === 'object' ? raw.items : {},
     filters: Array.isArray(raw.filters) ? raw.filters : [],
-    settings: { ...DEFAULT_SETTINGS, ...(raw.settings || {}) },
+    glossary: Array.isArray(raw.glossary) ? raw.glossary : [],
+    settings: withSettingDefaults(raw.settings),
   };
 }
 
 export async function getSettings() {
   const { settings } = await chrome.storage.local.get('settings');
-  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  return withSettingDefaults(settings);
 }
 
 export async function updateSettings(patch) {
   const settings = { ...(await getSettings()), ...patch };
   await chrome.storage.local.set({ settings });
   return settings;
+}
+
+/** translation だけを部分更新する (他の翻訳設定を消さずに 1 項目だけ変える用)。 */
+export async function updateTranslationSettings(patch) {
+  const current = await getSettings();
+  return updateSettings({ translation: { ...current.translation, ...patch } });
 }
 
 /** URL の末尾スラッシュなどを揃えて重複登録を防ぐ。 */
@@ -106,6 +133,9 @@ export async function renameFeed(feedId, title) {
   return updateFeed(feedId, { title: trimmed, titleEdited: true });
 }
 
+/** 記事に持たせる翻訳フィールドの空の状態。 */
+const CLEARED_TRANSLATION = { titleJa: '', summaryJa: '', sourceLang: '', translatedAt: null };
+
 /**
  * 取得した記事を既存データにマージする。
  * 既に保存済みの ID は既読状態と初回取得時刻を保持し、本文のみ更新する。
@@ -121,14 +151,19 @@ export async function mergeItems(feedId, parsedItems, settings) {
   for (const parsed of parsedItems) {
     const previous = byId.get(parsed.id);
     if (previous) {
+      const title = parsed.title || previous.title;
+      const summary = parsed.summary || previous.summary;
+      // 原文が書き換わったら訳文は無効。次の翻訳で作り直す
+      const sourceChanged = title !== previous.title || summary !== previous.summary;
       byId.set(parsed.id, {
         ...previous,
-        title: parsed.title || previous.title,
+        title,
         link: parsed.link || previous.link,
         author: parsed.author || previous.author,
         published: parsed.published ?? previous.published,
-        summary: parsed.summary || previous.summary,
+        summary,
         content: parsed.content || previous.content,
+        ...(sourceChanged ? CLEARED_TRANSLATION : {}),
       });
     } else {
       byId.set(parsed.id, {
@@ -181,6 +216,80 @@ export async function markAllRead(feedId = null, itemIds = null) {
     );
   }
   await chrome.storage.local.set({ items });
+}
+
+/**
+ * 翻訳結果をまとめて保存する (書き込みは 1 回)。
+ * @param {Array<{feedId: string, itemId: string, titleJa: string, summaryJa: string, sourceLang: string}>} entries
+ * @returns {number} 実際に更新された記事数
+ */
+export async function saveTranslations(entries) {
+  if (!entries || entries.length === 0) return 0;
+  const { items } = await getState();
+  const byFeed = new Map();
+  for (const entry of entries) {
+    if (!byFeed.has(entry.feedId)) byFeed.set(entry.feedId, new Map());
+    byFeed.get(entry.feedId).set(entry.itemId, entry);
+  }
+
+  const now = Date.now();
+  let updated = 0;
+  for (const [feedId, patches] of byFeed) {
+    const list = items[feedId];
+    if (!list) continue;
+    items[feedId] = list.map((item) => {
+      const patch = patches.get(item.id);
+      if (!patch) return item;
+      updated += 1;
+      return {
+        ...item,
+        titleJa: patch.titleJa || '',
+        summaryJa: patch.summaryJa || '',
+        sourceLang: patch.sourceLang || '',
+        translatedAt: now,
+      };
+    });
+  }
+  if (updated > 0) await chrome.storage.local.set({ items });
+  return updated;
+}
+
+/** すべての記事から訳文を消す (用語集を直したあとに訳し直す用途)。 */
+export async function clearTranslations() {
+  const { items } = await getState();
+  for (const feedId of Object.keys(items)) {
+    items[feedId] = items[feedId].map((item) => ({ ...item, ...CLEARED_TRANSLATION }));
+  }
+  await chrome.storage.local.set({ items });
+}
+
+// -------------------------------------------------------------------- 用語集
+
+export async function addGlossaryEntry(source, target) {
+  const from = (source || '').trim();
+  const to = (target || '').trim();
+  if (!from || !to) throw new Error('原語と訳語の両方を入力してください');
+  const { glossary } = await getState();
+  if (glossary.some((entry) => entry.source.toLowerCase() === from.toLowerCase())) {
+    throw new Error('同じ原語が既に登録されています');
+  }
+  const next = [...glossary, { id: newId('glo'), source: from, target: to, enabled: true }];
+  await chrome.storage.local.set({ glossary: next });
+  return next;
+}
+
+export async function updateGlossaryEntry(entryId, patch) {
+  const { glossary } = await getState();
+  const next = glossary.map((entry) => (entry.id === entryId ? { ...entry, ...patch } : entry));
+  await chrome.storage.local.set({ glossary: next });
+  return next;
+}
+
+export async function removeGlossaryEntry(entryId) {
+  const { glossary } = await getState();
+  const next = glossary.filter((entry) => entry.id !== entryId);
+  await chrome.storage.local.set({ glossary: next });
+  return next;
 }
 
 export async function addFilter(keyword, mode = 'exclude') {

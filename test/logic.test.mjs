@@ -30,6 +30,7 @@ const { parseFeed } = await import(`${SRC}/parser.js`);
 const store = await import(`${SRC}/store.js`);
 const { applyQuery, highlightTerms, parseQuery } = await import(`${SRC}/query.js`);
 const { sanitizeHtml, toPlainText } = await import(`${SRC}/sanitize.js`);
+const translate = await import(`${SRC}/translate.js`);
 
 let passed = 0;
 function check(name, fn) {
@@ -260,6 +261,17 @@ check('未読のみ / 並び順', () => {
   assert.deepEqual(applyQuery(ITEMS, { unreadOnly: true }).map((i) => i.id), ['1', '3']);
   assert.deepEqual(applyQuery(ITEMS, {}).map((i) => i.id), ['1', '2', '3']);
   assert.deepEqual(applyQuery(ITEMS, { sortOrder: 'oldest' }).map((i) => i.id), ['3', '2', '1']);
+});
+
+check('検索・フィルタ: 訳文も対象になる', () => {
+  const translated = [
+    { id: 't1', feedId: 'f1', title: 'Shipping a Rust compiler', titleJa: 'Rust コンパイラの出荷',
+      summary: 'notes', summaryJa: 'リリースノート', content: '', author: '', published: 400, read: false },
+  ];
+  assert.deepEqual(applyQuery(translated, { search: 'コンパイラ' }).map((i) => i.id), ['t1']);
+  assert.deepEqual(applyQuery(translated, { search: 'リリース' }).map((i) => i.id), ['t1']);
+  const filters = [{ id: 'a', keyword: 'コンパイラ', mode: 'exclude', enabled: true }];
+  assert.deepEqual(applyQuery(translated, { filters }).map((i) => i.id), []);
 });
 
 check('ハイライト対象は検索語と include キーワード', () => {
@@ -508,6 +520,207 @@ await checkAsync('refreshAll: 1 件失敗しても残りを続行する', async 
   const state = await store.getState();
   assert.match(state.feeds.find((f) => f.id === a.id).lastError, /HTTP 500/);
   assert.equal(state.feeds.find((f) => f.id === b.id).lastError, '');
+});
+
+// ---- translate --------------------------------------------------------------
+console.log('\ntranslate.js');
+
+/**
+ * Translator API の偽実装。
+ * translateFn(text) を差し替えることで、訳し方 (プレースホルダを壊すかどうか) を変えられる。
+ */
+function stubTranslator({ translateFn, detected = 'en', available = 'available' } = {}) {
+  const created = [];
+  const destroyed = [];
+  globalThis.Translator = {
+    async availability() {
+      return available;
+    },
+    async create({ sourceLanguage, targetLanguage }) {
+      const pair = `${sourceLanguage}>${targetLanguage}`;
+      created.push(pair);
+      return {
+        async translate(text) {
+          return translateFn ? translateFn(text) : `[${sourceLanguage}->${targetLanguage}] ${text}`;
+        },
+        destroy() {
+          destroyed.push(pair);
+        },
+      };
+    },
+  };
+  globalThis.LanguageDetector = {
+    async create() {
+      return {
+        async detect(text) {
+          const language = typeof detected === 'function' ? detected(text) : detected;
+          return [{ detectedLanguage: language, confidence: 0.9 }];
+        },
+      };
+    },
+  };
+  return { created, destroyed };
+}
+
+const GLOSSARY = [
+  { id: 'g1', source: 'pull request', target: 'プルリクエスト', enabled: true },
+  { id: 'g2', source: 'request', target: 'リクエスト', enabled: true },
+  { id: 'g3', source: 'Go', target: 'Go 言語', enabled: true },
+  { id: 'g4', source: 'stale', target: '無効', enabled: false },
+];
+
+check('用語集: 長い語を先に当て、大文字小文字は無視する', () => {
+  const { text, map } = translate.protectTerms('Open a Pull Request for the request', GLOSSARY);
+  assert.match(text, /TTZ0ZTT/, 'pull request がプレースホルダになる');
+  assert.equal(map[0].target, 'プルリクエスト');
+  assert.equal(translate.restoreTerms(text, map).includes('プルリクエスト'), true);
+  assert.equal(translate.restoreTerms(text, map).includes('リクエスト'), true);
+  assert.equal(translate.restoreTerms(text, map).includes('プルリクエストクエスト'), false);
+});
+
+check('用語集: ASCII 語は語境界を見るので部分一致しない', () => {
+  const { map } = translate.protectTerms('Google is not Go', GLOSSARY);
+  const restored = translate.restoreTerms(
+    translate.protectTerms('Google is not Go', GLOSSARY).text,
+    map
+  );
+  assert.equal(restored, 'Google is not Go 言語');
+});
+
+check('用語集: enabled=false の語は使わない', () => {
+  const { map } = translate.protectTerms('a stale entry', GLOSSARY);
+  assert.deepEqual(map.map((m) => m.source), []);
+});
+
+check('用語集: プレースホルダが壊れたら訳文への直接置換で救う', () => {
+  const { text, map } = translate.protectTerms('Open a pull request', GLOSSARY);
+  assert.match(text, /TTZ0ZTT/);
+  // 翻訳エンジンがトークンを落として原語を訳し戻した想定
+  const mangled = 'pull request を開く';
+  assert.equal(translate.restoreTerms(mangled, map), 'プルリクエスト を開く');
+});
+
+await checkAsync('translateItems: 訳文を返し、言語ペアごとに translator を使い回す', async () => {
+  const stub = stubTranslator();
+  const items = [
+    { id: 'i1', feedId: 'f1', title: 'Hello', summary: '<p>World</p>' },
+    { id: 'i2', feedId: 'f1', title: 'Second', summary: '<p>Body</p>' },
+  ];
+  const { results, failed, error } = await translate.translateItems(items, { glossary: [] });
+  assert.equal(error, '');
+  assert.equal(failed, 0);
+  assert.equal(results.length, 2);
+  assert.equal(results[0].titleJa, '[en->ja] Hello');
+  assert.equal(results[0].summaryJa, '[en->ja] World');
+  assert.equal(results[0].sourceLang, 'en');
+  assert.deepEqual(stub.created, ['en>ja'], '同じ言語ペアは 1 度だけ生成する');
+  assert.deepEqual(stub.destroyed, ['en>ja'], '使い終わったら解放する');
+});
+
+await checkAsync('translateItems: 用語集の訳語が訳文に反映される', async () => {
+  // 原文をそのまま返す = プレースホルダは保たれる
+  stubTranslator({ translateFn: (text) => text });
+  const items = [{ id: 'i1', feedId: 'f1', title: 'Reviewing a pull request', summary: '' }];
+  const { results } = await translate.translateItems(items, { glossary: GLOSSARY });
+  assert.equal(results[0].titleJa, 'Reviewing a プルリクエスト');
+});
+
+await checkAsync('translateItems: 日本語の記事は訳さず記録だけ残す', async () => {
+  stubTranslator({ detected: 'ja' });
+  // linkedom はタグを含まない文字列の解析で body を作らないため、既存テストと同じくタグ付きで渡す
+  const items = [{ id: 'i1', feedId: 'f1', title: '日本語の記事', summary: '<p>要約</p>' }];
+  const { results } = await translate.translateItems(items, { glossary: [] });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].titleJa, '');
+  assert.equal(results[0].sourceLang, 'ja');
+  // 記録が保存されれば以降は対象外になる
+  assert.equal(translate.needsTranslation({ title: 'x', translatedAt: Date.now() }), false);
+});
+
+await checkAsync('translateItems: 1 件失敗しても残りを続行する', async () => {
+  stubTranslator({
+    translateFn: (text) => {
+      if (text.includes('boom')) throw new Error('translate failed');
+      return `ja:${text}`;
+    },
+  });
+  const items = [
+    { id: 'i1', feedId: 'f1', title: 'boom', summary: '' },
+    { id: 'i2', feedId: 'f1', title: 'fine', summary: '' },
+  ];
+  const { results, failed } = await translate.translateItems(items, { glossary: [] });
+  assert.equal(failed, 1);
+  assert.deepEqual(results.map((r) => r.itemId), ['i2']);
+});
+
+await checkAsync('Translator API が無い環境では理由を返して落ちない', async () => {
+  delete globalThis.Translator;
+  delete globalThis.LanguageDetector;
+  assert.equal(translate.isTranslatorSupported(), false);
+  assert.equal(await translate.checkAvailability('en'), 'unavailable');
+  const { results, error } = await translate.translateItems([{ id: 'i1', title: 'x' }], {});
+  assert.deepEqual(results, []);
+  assert.match(error, /Chrome 138/);
+});
+
+// ---- store (翻訳) -----------------------------------------------------------
+console.log('\nstore.js (翻訳)');
+
+await checkAsync('translation 設定は入れ子でも既定値が埋まる', async () => {
+  await store.updateTranslationSettings({ enabled: true });
+  const settings = await store.getSettings();
+  assert.equal(settings.translation.enabled, true);
+  assert.equal(settings.translation.showOriginal, true, '触っていない項目は既定値のまま');
+  assert.equal(settings.autoMarkRead, true, '他の設定を壊さない');
+});
+
+await checkAsync('用語集の追加・重複拒否・削除', async () => {
+  await store.addGlossaryEntry('pull request', 'プルリクエスト');
+  await assert.rejects(() => store.addGlossaryEntry('Pull Request', 'x'), /既に登録/);
+  await assert.rejects(() => store.addGlossaryEntry('only source', ''), /両方を入力/);
+  const { glossary } = await store.getState();
+  assert.equal(glossary.length, 1);
+  assert.equal(glossary[0].enabled, true);
+  await store.removeGlossaryEntry(glossary[0].id);
+  assert.equal((await store.getState()).glossary.length, 0);
+});
+
+await checkAsync('saveTranslations: 訳文を保存し、原文が変わると破棄される', async () => {
+  const feedId = (await store.addFeed('https://translate.example/feed.xml')).feed.id;
+  const settings = { itemsPerFeed: 200, retentionDays: 30 };
+  const base = { id: 'x1', link: 'https://e/x1', author: '', published: Date.now(), content: '' };
+  await store.mergeItems(feedId, [{ ...base, title: 'Original', summary: 'Summary' }], settings);
+
+  const saved = await store.saveTranslations([
+    { feedId, itemId: 'x1', titleJa: '原文', summaryJa: '要約', sourceLang: 'en' },
+  ]);
+  assert.equal(saved, 1);
+  const translated = (await store.getState()).items[feedId][0];
+  assert.equal(translated.titleJa, '原文');
+  assert.ok(translated.translatedAt);
+
+  // 原文が変わらない再取得では訳文を保持する
+  await store.mergeItems(feedId, [{ ...base, title: 'Original', summary: 'Summary' }], settings);
+  assert.equal((await store.getState()).items[feedId][0].titleJa, '原文');
+
+  // タイトルが書き換わったら訳文を捨てて訳し直させる
+  await store.mergeItems(feedId, [{ ...base, title: 'Updated', summary: 'Summary' }], settings);
+  const stale = (await store.getState()).items[feedId][0];
+  assert.equal(stale.titleJa, '');
+  assert.equal(stale.translatedAt, null);
+  assert.equal(translate.needsTranslation(stale), true);
+});
+
+await checkAsync('clearTranslations: すべての訳文を破棄する', async () => {
+  const { items } = await store.getState();
+  const feedId = Object.keys(items).find((id) => items[id].some((item) => item.id === 'x1'));
+  await store.saveTranslations([
+    { feedId, itemId: 'x1', titleJa: '訳', summaryJa: '訳', sourceLang: 'en' },
+  ]);
+  await store.clearTranslations();
+  for (const list of Object.values((await store.getState()).items)) {
+    for (const item of list) assert.equal(item.titleJa, '');
+  }
 });
 
 console.log(`\n${passed} 件のチェックが成功${process.exitCode ? '（失敗あり）' : ''}`);

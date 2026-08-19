@@ -47,6 +47,45 @@
           <p id="add-filter-message" class="message" hidden></p>
           <ul id="filter-list" class="filter-list"></ul>
         </section>
+
+        <section class="translation">
+          <h2>日本語翻訳</h2>
+          <label class="check">
+            <input id="translate-enabled" type="checkbox" />
+            件名と概要を日本語で表示
+          </label>
+          <label class="check" title="フィード更新後に未翻訳の記事を自動で翻訳する">
+            <input id="translate-auto" type="checkbox" />
+            更新時に自動翻訳
+          </label>
+          <label class="check">
+            <input id="translate-show-original" type="checkbox" />
+            原文も併記
+          </label>
+          <p id="translate-status" class="translate-status"></p>
+          <button id="translate-prepare" class="btn" type="button" hidden>
+            翻訳モデルを準備
+          </button>
+
+          <h3>用語集</h3>
+          <p class="hint hint-inline">
+            訳語を固定したい技術用語を登録します（例: <code>pull request</code> →
+            <code>プルリクエスト</code>）。
+          </p>
+          <form id="add-glossary-form" class="add-glossary" autocomplete="off">
+            <label class="sr-only" for="glossary-source">原語</label>
+            <input id="glossary-source" type="text" placeholder="原語" spellcheck="false" />
+            <span class="glossary-arrow" aria-hidden="true">→</span>
+            <label class="sr-only" for="glossary-target">訳語</label>
+            <input id="glossary-target" type="text" placeholder="訳語" spellcheck="false" />
+            <button class="btn" type="submit">追加</button>
+          </form>
+          <p id="add-glossary-message" class="message" hidden></p>
+          <ul id="glossary-list" class="glossary-list"></ul>
+          <button id="retranslate-all" class="btn btn-quiet" type="button" title="保存済みの訳文を破棄して翻訳し直す">
+            訳文を破棄して翻訳し直す
+          </button>
+        </section>
       </aside>
 
       <!-- ============================================== 中央: 記事一覧 -->
@@ -69,6 +108,9 @@
             <option value="newest">新しい順</option>
             <option value="oldest">古い順</option>
           </select>
+          <button id="translate-visible" class="btn" type="button" title="表示中の未翻訳記事を日本語に翻訳する">
+            翻訳
+          </button>
           <button id="mark-all-read" class="btn" type="button" title="表示中の記事をすべて既読にする">
             すべて既読
           </button>
@@ -89,14 +131,20 @@
         <article id="preview-article" class="preview-article" hidden>
           <header class="preview-head">
             <a id="preview-title" class="preview-title" target="_blank" rel="noopener noreferrer"></a>
+            <p id="preview-title-original" class="preview-title-original" hidden></p>
             <p id="preview-meta" class="preview-meta"></p>
             <div class="preview-actions">
               <a id="preview-link" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
                 元記事を開く ↗
               </a>
               <button id="toggle-read" class="btn" type="button">未読にする</button>
+              <button id="translate-item" class="btn" type="button" hidden>この記事を翻訳</button>
             </div>
           </header>
+          <section id="preview-translation" class="preview-translation" hidden>
+            <h2 class="preview-translation-head">日本語概要</h2>
+            <p id="preview-translation-summary"></p>
+          </section>
           <div id="preview-body" class="preview-body"></div>
         </article>
       </section>

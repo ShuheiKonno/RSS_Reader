@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RSS Reader",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "検索・キーワードフィルタ・未読既読管理・日本語翻訳に対応した軽量 RSS/Atom リーダー",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "alarms", "offscreen", "tabs"],

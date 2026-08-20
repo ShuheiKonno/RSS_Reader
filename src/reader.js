@@ -81,6 +81,8 @@ const el = {
   closeSettings: document.getElementById('close-settings'),
   settingsDialog: document.getElementById('settings-dialog'),
   settingsSummary: document.getElementById('settings-summary'),
+  refreshMinutes: document.getElementById('refresh-minutes'),
+  refreshStatus: document.getElementById('refresh-status'),
   settingsTabs: Array.from(document.querySelectorAll('.settings-tab')),
   settingsPanels: Array.from(document.querySelectorAll('.settings-panel')),
 };
@@ -618,12 +620,28 @@ function renderTranslationPanel() {
   el.translateStatus.hidden = !el.translateStatus.textContent;
 }
 
+const REFRESH_CHOICES = [5, 15, 30, 60];
+
+/** 更新間隔の選択を設定に合わせる。選択肢に無い値は最も近いものへ寄せる。 */
+function renderRefreshPanel() {
+  const saved = Number(state.data.settings.refreshMinutes) || 30;
+  const closest = REFRESH_CHOICES.reduce((best, value) =>
+    Math.abs(value - saved) < Math.abs(best - saved) ? value : best
+  );
+  el.refreshMinutes.value = String(closest);
+  el.refreshStatus.textContent =
+    closest === saved
+      ? `いまは ${saved} 分ごとに全フィードを取得します。`
+      : `保存されている値は ${saved} 分です（選択肢に無いため ${closest} 分を表示しています）。`;
+}
+
 /** サイドバー最下部に、設定画面へ移した項目の状態を 1 行で示す。 */
 function renderSettingsSummary() {
   const filters = state.data.filters || [];
   const enabledFilters = filters.filter((f) => f.enabled !== false).length;
   const glossary = state.data.glossary || [];
   const parts = [
+    `更新 ${Number(state.data.settings.refreshMinutes) || 30} 分`,
     filters.length === 0
       ? 'フィルタなし'
       : `フィルタ ${enabledFilters}/${filters.length} 件`,
@@ -656,6 +674,7 @@ function renderAll() {
   renderFeeds();
   renderFilters();
   renderGlossary();
+  renderRefreshPanel();
   renderTranslationPanel();
   renderSettingsSummary();
   renderList();
@@ -959,6 +978,11 @@ el.translateAuto.addEventListener('change', async () => {
 
 el.translateShowOriginal.addEventListener('change', async () => {
   await updateTranslationSettings({ showOriginal: el.translateShowOriginal.checked });
+});
+
+el.refreshMinutes.addEventListener('change', async () => {
+  // 保存すると background の ensureRefreshAlarm が周期の変化を見てアラームを組み直す
+  await updateSettings({ refreshMinutes: Number(el.refreshMinutes.value) });
 });
 
 el.openSettings.addEventListener('click', () => openSettingsDialog());

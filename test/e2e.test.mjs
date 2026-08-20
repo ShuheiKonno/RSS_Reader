@@ -220,6 +220,31 @@ try {
     'タブ切替で用語集パネルに切り替わる',
     (await page.isVisible('[data-panel=glossary]')) && !(await page.isVisible('[data-panel=filters]'))
   );
+  // --- 更新間隔 ---
+  await page.click('.settings-tab[data-tab=refresh]');
+  await page.waitForSelector('[data-panel=refresh]:not([hidden])');
+  check('更新タブに切り替わる', await page.isVisible('[data-panel=refresh]'));
+  check('既定の更新間隔は 30 分', (await page.inputValue('#refresh-minutes')) === '30');
+  check(
+    '選べるのは 5 / 15 / 30 / 60 分',
+    (await page.$$eval('#refresh-minutes option', (nodes) => nodes.map((n) => n.value))).join() ===
+      '5,15,30,60'
+  );
+
+  await page.selectOption('#refresh-minutes', '5');
+  await page.waitForFunction(
+    () => document.querySelector('#settings-summary').textContent.includes('更新 5 分'),
+    null,
+    { timeout: 15000 }
+  );
+  check('更新間隔がサイドバーのサマリに反映される', true);
+  const savedMinutes = await page.evaluate(async () => {
+    const { settings } = await chrome.storage.local.get('settings');
+    return settings.refreshMinutes;
+  });
+  check('更新間隔が保存される', savedMinutes === 5, `refreshMinutes=${savedMinutes}`);
+  await page.selectOption('#refresh-minutes', '30');
+
   await page.click('.settings-tab[data-tab=filters]');
   await page.waitForSelector('[data-panel=filters]:not([hidden])');
 

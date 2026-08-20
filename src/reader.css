@@ -439,6 +439,20 @@ mark {
   padding: 14px 16px 16px;
 }
 
+/* 「ラベル … 入力」の 1 行設定 */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 2px;
+  font-size: 13px;
+}
+
+.setting-row select {
+  flex: none;
+}
+
 /* ---------------------------------------------------------------- 翻訳 */
 
 .settings-panel .check {

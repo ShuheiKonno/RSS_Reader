@@ -60,11 +60,27 @@ async function updateBadge() {
 
 // ------------------------------------------------------------------ alarms
 
-async function scheduleRefresh() {
+/** 設定から実際に使う周期を求める。chrome.alarms の最小周期は 1 分。 */
+async function refreshPeriodMinutes() {
   const { refreshMinutes } = await getSettings();
-  // chrome.alarms の最小周期は 1 分
-  const period = Math.max(1, Number(refreshMinutes) || 30);
+  return Math.max(1, Number(refreshMinutes) || 30);
+}
+
+/**
+ * 定期更新のアラームが正しい周期で存在することを保証する。
+ *
+ * アラームを作り直すと次回実行までの待ち時間がリセットされるため、
+ * 周期が変わったとき (と、そもそもアラームが無いとき) だけ作り直す。
+ * これにより、翻訳設定など更新間隔と無関係な変更で更新が先送りされることが無くなる。
+ *
+ * @returns {Promise<'kept'|'created'|'rescheduled'>} 何をしたか (ログとテスト用)
+ */
+async function ensureRefreshAlarm() {
+  const period = await refreshPeriodMinutes();
+  const existing = await chrome.alarms.get(ALARM_NAME);
+  if (existing && existing.periodInMinutes === period) return 'kept';
   await chrome.alarms.create(ALARM_NAME, { periodInMinutes: period, delayInMinutes: period });
+  return existing ? 'rescheduled' : 'created';
 }
 
 let refreshing = false;
@@ -85,12 +101,12 @@ async function runRefresh() {
 // ------------------------------------------------------------------ events
 
 chrome.runtime.onInstalled.addListener(() => {
-  scheduleRefresh();
+  ensureRefreshAlarm();
   updateBadge();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  scheduleRefresh();
+  ensureRefreshAlarm();
   updateBadge();
 });
 
@@ -101,7 +117,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // 既読操作やリーダー側の更新をバッジへ反映する
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.items) updateBadge();
-  if (area === 'local' && changes.settings) scheduleRefresh();
+  // 更新間隔が変わっていなければ ensureRefreshAlarm は何もしない
+  if (area === 'local' && changes.settings) ensureRefreshAlarm();
 });
 
 // ツールバーアイコン: 既に開いているリーダータブを再利用する
@@ -130,3 +147,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+// ---------------------------------------------------------------- self-heal
+
+// Service Worker は停止と再起動を繰り返し、onInstalled / onStartup は毎回は起きない。
+// アラームが何らかの理由で失われると定期更新が二度と走らなくなるため、
+// SW が起動するたびにトップレベルで存在を確かめ、無ければ作り直す。
+ensureRefreshAlarm();

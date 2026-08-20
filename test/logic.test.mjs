@@ -825,4 +825,87 @@ await checkAsync('clearTranslations: すべての訳文を破棄する', async (
   }
 });
 
+// ---- background (定期更新アラーム) -----------------------------------------
+console.log('\nbackground.js');
+
+// Service Worker の環境を最小限そろえる。アラームの作成回数を数えて、
+// 「無関係な設定変更で作り直していないか」を見る。
+const alarmStore = new Map();
+const swListeners = { installed: [], startup: [], alarm: [], storage: [] };
+let alarmCreateCalls = 0;
+
+globalThis.chrome.alarms = {
+  async get(name) {
+    return alarmStore.get(name);
+  },
+  async create(name, info) {
+    alarmCreateCalls += 1;
+    alarmStore.set(name, { name, periodInMinutes: info.periodInMinutes });
+  },
+  onAlarm: { addListener: (fn) => swListeners.alarm.push(fn) },
+};
+globalThis.chrome.action = {
+  async setBadgeBackgroundColor() {},
+  async setBadgeText() {},
+  onClicked: { addListener() {} },
+};
+globalThis.chrome.runtime = {
+  getURL: (path) => `chrome-extension://test/${path}`,
+  async getContexts() {
+    return [];
+  },
+  onInstalled: { addListener: (fn) => swListeners.installed.push(fn) },
+  onStartup: { addListener: (fn) => swListeners.startup.push(fn) },
+  onMessage: { addListener() {} },
+};
+globalThis.chrome.storage.onChanged = { addListener: (fn) => swListeners.storage.push(fn) };
+globalThis.chrome.tabs = { async query() { return []; }, async create() {}, async update() {} };
+globalThis.chrome.windows = { async update() {} };
+globalThis.chrome.offscreen = { async createDocument() {} };
+
+const ALARM = 'rss-refresh';
+/** 呼び出し側が await しない箇所があるので、非同期処理が落ち着くまで待つ。 */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+await store.updateSettings({ refreshMinutes: 30 });
+// import 自体が「Service Worker の起動」に相当する
+await import(`${SRC}/../background.js`);
+await settle();
+
+await checkAsync('SW 起動時にアラームが無ければ作られる', async () => {
+  assert.deepEqual(alarmStore.get(ALARM), { name: ALARM, periodInMinutes: 30 });
+  assert.equal(alarmCreateCalls, 1);
+});
+
+const fireStorageChange = async (changes) => {
+  for (const listener of swListeners.storage) listener(changes, 'local');
+  await settle();
+};
+
+await checkAsync('更新間隔と無関係な設定変更ではアラームを作り直さない', async () => {
+  const before = alarmCreateCalls;
+  await store.updateTranslationSettings({ enabled: true });
+  await fireStorageChange({ settings: {} });
+  assert.equal(alarmCreateCalls, before, '作り直さない = 次回更新までの待ち時間が保たれる');
+  assert.equal(alarmStore.get(ALARM).periodInMinutes, 30);
+});
+
+await checkAsync('更新間隔を変えたときだけ組み直す', async () => {
+  const before = alarmCreateCalls;
+  await store.updateSettings({ refreshMinutes: 15 });
+  await fireStorageChange({ settings: {} });
+  assert.equal(alarmCreateCalls, before + 1);
+  assert.equal(alarmStore.get(ALARM).periodInMinutes, 15);
+});
+
+await checkAsync('アラームが失われていれば作り直す（自己修復）', async () => {
+  const before = alarmCreateCalls;
+  alarmStore.delete(ALARM);
+  // onStartup も トップレベルと同じ経路を通る
+  for (const listener of swListeners.startup) listener();
+  await settle();
+  assert.equal(alarmCreateCalls, before + 1);
+  assert.equal(alarmStore.get(ALARM).periodInMinutes, 15, '設定どおりの周期で復活する');
+});
+
 console.log(`\n${passed} 件のチェックが成功${process.exitCode ? '（失敗あり）' : ''}`);

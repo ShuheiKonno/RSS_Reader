@@ -1,6 +1,6 @@
 {
   "name": "rss-reader-extension",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "検索・キーワードフィルタ・未読既読管理・日本語翻訳に対応した Chrome 拡張の RSS リーダー",
   "type": "module",

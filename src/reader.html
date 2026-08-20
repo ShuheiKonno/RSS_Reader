@@ -114,6 +114,16 @@
           class="settings-tab"
           type="button"
           role="tab"
+          data-tab="refresh"
+          aria-selected="false"
+          aria-controls="settings-panel-refresh"
+        >
+          更新
+        </button>
+        <button
+          class="settings-tab"
+          type="button"
+          role="tab"
           data-tab="filters"
           aria-selected="true"
           aria-controls="settings-panel-filters"
@@ -141,6 +151,29 @@
           用語集
         </button>
       </div>
+
+      <section
+        id="settings-panel-refresh"
+        class="settings-panel"
+        data-panel="refresh"
+        role="tabpanel"
+        hidden
+      >
+        <p class="hint hint-inline">
+          バックグラウンドで全フィードを自動取得する間隔です。
+          間隔を変えたときだけスケジュールを組み直すので、他の設定を触っても次回の更新は遅れません。
+        </p>
+        <label class="setting-row" for="refresh-minutes">
+          <span>更新間隔</span>
+          <select id="refresh-minutes">
+            <option value="5">5 分ごと</option>
+            <option value="15">15 分ごと</option>
+            <option value="30">30 分ごと</option>
+            <option value="60">60 分ごと</option>
+          </select>
+        </label>
+        <p id="refresh-status" class="translate-status"></p>
+      </section>
 
       <section
         id="settings-panel-filters"

@@ -600,6 +600,54 @@ check('用語集: プレースホルダが壊れたら訳文への直接置換�
   assert.equal(translate.restoreTerms(mangled, map), 'プルリクエスト を開く');
 });
 
+check('用語集: 同じ文字の連続が潰れたトークンでも復元する', () => {
+  const { map } = translate.protectTerms('Open a pull request', GLOSSARY);
+  // 実際に観測された崩れ方: TTZ0ZTT が TZ0ZTT になって返ってくる
+  assert.equal(translate.restoreTerms('TZ0ZTT を開く', map), 'プルリクエスト を開く');
+  assert.equal(translate.restoreTerms('TTZ0ZT を開く', map), 'プルリクエスト を開く');
+});
+
+check('用語集: 大小の変化や空白の挿入が入ったトークンでも復元する', () => {
+  const { map } = translate.protectTerms('Open a pull request', GLOSSARY);
+  assert.equal(translate.restoreTerms('ttz0ztt を開く', map), 'プルリクエスト を開く');
+  assert.equal(translate.restoreTerms('TTZ 0 ZTT を開く', map), 'プルリクエスト を開く');
+});
+
+check('用語集: 訳語が原語と同じ (訳させない) 指定でもトークンが残らない', () => {
+  const glossary = [
+    { id: 'g1', source: 'End Of Life Announcement', target: 'End Of Life Announcement', enabled: true },
+  ];
+  const { text, map } = translate.protectTerms('End of Life Announcement: Junos Fusion', glossary);
+  assert.match(text, /TTZ0ZTT/, '原語がプレースホルダに退避される');
+  // 崩れて返ってきても原語のまま復元される
+  assert.equal(
+    translate.restoreTerms('TZ0ZTT: Junos Fusion', map),
+    'End Of Life Announcement: Junos Fusion'
+  );
+  assert.equal(
+    translate.restoreTerms('TTZ0ZTT: Junos Fusion', map),
+    'End Of Life Announcement: Junos Fusion'
+  );
+});
+
+check('用語集: 複数の用語をそれぞれの添字で戻す', () => {
+  const { map } = translate.protectTerms('pull request and Go', GLOSSARY);
+  assert.equal(map.length, 2);
+  // 添字の順に対応する訳語へ戻る (取り違えない)
+  assert.equal(translate.restoreTerms('TZ0ZTT と TZ1ZTT', map), 'プルリクエスト と Go 言語');
+});
+
+check('用語集: 添字が範囲外のトークン様の文字列は書き換えない', () => {
+  const { map } = translate.protectTerms('Open a pull request', GLOSSARY);
+  // map は 1 件なので添字 7 に対応する用語は無い
+  assert.equal(translate.restoreTerms('型番 TTZ7ZTT の話', map), '型番 TTZ7ZTT の話');
+});
+
+check('用語集: 用語が無いときは訳文をそのまま返す', () => {
+  assert.equal(translate.restoreTerms('TTZ0ZTT はそのまま', []), 'TTZ0ZTT はそのまま');
+  assert.equal(translate.restoreTerms('', []), '');
+});
+
 await checkAsync('translateItems: 訳文を返し、言語ペアごとに translator を使い回す', async () => {
   const stub = stubTranslator();
   const items = [
@@ -623,6 +671,29 @@ await checkAsync('translateItems: 用語集の訳語が訳文に反映される'
   const items = [{ id: 'i1', feedId: 'f1', title: 'Reviewing a pull request', summary: '' }];
   const { results } = await translate.translateItems(items, { glossary: GLOSSARY });
   assert.equal(results[0].titleJa, 'Reviewing a プルリクエスト');
+});
+
+await checkAsync('translateItems: トークンを崩す翻訳エンジンでも訳語に戻る', async () => {
+  // 実際に観測された挙動: TTZ0ZTT の T の連続が潰れて TZ0ZTT で返る
+  stubTranslator({ translateFn: (text) => text.replace(/TTZ(\d+)ZTT/g, 'TZ$1ZTT') });
+  const items = [
+    { id: 'i1', feedId: 'f1', title: 'End of Life Announcement: Junos Fusion', summary: '' },
+  ];
+  const glossary = [
+    { id: 'g1', source: 'End Of Life Announcement', target: 'End Of Life Announcement', enabled: true },
+  ];
+  const { results } = await translate.translateItems(items, { glossary });
+  assert.equal(results[0].titleJa, 'End Of Life Announcement: Junos Fusion');
+});
+
+await checkAsync('translateItems: 復元できない崩れ方なら原文を返す', async () => {
+  // 添字まで失われるとどの用語か特定できない
+  stubTranslator({ translateFn: (text) => text.replace(/TTZ\d+ZTT/g, 'TZ ZTT') });
+  const items = [{ id: 'i1', feedId: 'f1', title: 'Reviewing a pull request', summary: '' }];
+  const { results } = await translate.translateItems(items, { glossary: GLOSSARY });
+  // トークンの残骸ではなく原文が入る
+  assert.equal(results[0].titleJa, 'Reviewing a pull request');
+  assert.equal(/ZTT/.test(results[0].titleJa), false, 'トークンの残骸が画面に出ない');
 });
 
 await checkAsync('translateItems: 日本語の記事は訳さず記録だけ残す', async () => {

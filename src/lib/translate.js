@@ -108,6 +108,15 @@ async function detectWith(detector, sample) {
 // 機械翻訳が壊しにくいよう、記号ではなく英数字だけのトークンを使う。
 const PLACEHOLDER = (index) => `TTZ${index}ZTT`;
 
+// 訳文から拾い直すためのパターン。内蔵翻訳はトークンをそのまま返すとは限らず、
+// TTZ0ZTT が TZ0ZTT になる (同じ文字の連続が潰れる) ことがある。
+// そのため文字数は固定せず、T…Z 数字 Z…T という骨格と添字だけで照合する。
+const PLACEHOLDER_PATTERN = /T+\s*Z+\s*(\d+)\s*Z+\s*T+/gi;
+
+// 復元しきれなかったトークンの痕跡。TTZ / ZTT という並びは自然な文にほぼ現れず、
+// 用語を退避したときだけ見るので誤検知は起きにくい。
+const PLACEHOLDER_RESIDUE = /TTZ|ZTT|TZ\s*\d|\d\s*ZT/i;
+
 function activeGlossary(glossary) {
   return (glossary || [])
     .filter((entry) => entry && entry.enabled !== false && entry.source && entry.target)
@@ -151,20 +160,29 @@ export function protectTerms(text, glossary) {
 
 /**
  * 訳文のプレースホルダを訳語へ戻す。
- * 翻訳エンジンがトークンを壊した場合に備えて、見つからなかった用語は
- * 訳文に対する原語→訳語の素朴な置換でフォールバックする。
+ *
+ * トークンは原型どおり返ってこないことがある (大小の変化、空白の挿入、
+ * 同じ文字の連続が潰れる) ため、添字を手がかりに緩く照合する。
+ * それでも見つからなかった用語だけ、訳文に残っている原語へ当てにいく。
  */
 export function restoreTerms(translated, map) {
+  const entries = map || [];
   let result = translated || '';
-  for (const { token, source, target } of map || []) {
-    // 大小が変わって返ってくることがあるので大文字小文字は無視する
-    const tokenPattern = new RegExp(escapeRegExp(token), 'gi');
-    if (tokenPattern.test(result)) {
-      tokenPattern.lastIndex = 0;
-      result = result.replace(tokenPattern, target);
-    } else {
-      result = result.replace(termPattern(source), target);
-    }
+  if (entries.length === 0) return result;
+
+  const restored = new Set();
+  result = result.replace(PLACEHOLDER_PATTERN, (matched, index) => {
+    const entry = entries[Number(index)];
+    // 添字が範囲外なら元の文字列に触らない (本文中の型番などを壊さないため)
+    if (!entry) return matched;
+    restored.add(entry.token);
+    return entry.target;
+  });
+
+  // トークンが跡形もなく消えた用語は、原語が訳文に残っていればそこへ当てる
+  for (const entry of entries) {
+    if (restored.has(entry.token)) continue;
+    result = result.replace(termPattern(entry.source), entry.target);
   }
   return result;
 }
@@ -226,7 +244,10 @@ async function translateText(translator, text, glossary) {
   if (!text) return '';
   const { text: protectedText, map } = protectTerms(text, glossary);
   const translated = await translator.translate(protectedText);
-  return restoreTerms(translated, map).trim();
+  const restored = restoreTerms(translated, map).trim();
+  // 想定外の崩れ方で復元できなかったときは、トークンの残骸を見せるより原文を返す
+  if (map.length > 0 && PLACEHOLDER_RESIDUE.test(restored)) return text.trim();
+  return restored;
 }
 
 /** 翻訳対象になる原文を記事から取り出す (要約は HTML を落としてから使う)。 */

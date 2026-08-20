@@ -7,12 +7,15 @@
   </head>
   <body>
     <div class="layout">
-      <!-- ============================ 左: フィード + キーワードフィルタ -->
+      <!-- ============================================ 左: フィード一覧 -->
       <aside class="sidebar">
         <header class="sidebar-head">
           <h1>RSS Reader</h1>
           <button id="refresh-all" class="btn btn-primary" type="button" title="すべてのフィードを更新">
             更新
+          </button>
+          <button id="open-settings" class="btn" type="button" title="設定を開く" aria-label="設定を開く">
+            ⚙
           </button>
         </header>
 
@@ -32,60 +35,7 @@
           <ul id="feed-list" class="feed-list"></ul>
         </nav>
 
-        <section class="filters">
-          <h2>キーワードフィルタ</h2>
-          <form id="add-filter-form" class="add-filter" autocomplete="off">
-            <label class="sr-only" for="filter-keyword">キーワード</label>
-            <input id="filter-keyword" type="text" placeholder="キーワード" spellcheck="false" />
-            <label class="sr-only" for="filter-mode">条件</label>
-            <select id="filter-mode">
-              <option value="exclude">除外する</option>
-              <option value="include">含める</option>
-            </select>
-            <button class="btn" type="submit">追加</button>
-          </form>
-          <p id="add-filter-message" class="message" hidden></p>
-          <ul id="filter-list" class="filter-list"></ul>
-        </section>
-
-        <section class="translation">
-          <h2>日本語翻訳</h2>
-          <label class="check">
-            <input id="translate-enabled" type="checkbox" />
-            件名と概要を日本語で表示
-          </label>
-          <label class="check" title="フィード更新後に未翻訳の記事を自動で翻訳する">
-            <input id="translate-auto" type="checkbox" />
-            更新時に自動翻訳
-          </label>
-          <label class="check">
-            <input id="translate-show-original" type="checkbox" />
-            原文も併記
-          </label>
-          <p id="translate-status" class="translate-status"></p>
-          <button id="translate-prepare" class="btn" type="button" hidden>
-            翻訳モデルを準備
-          </button>
-
-          <h3>用語集</h3>
-          <p class="hint hint-inline">
-            訳語を固定したい技術用語を登録します（例: <code>pull request</code> →
-            <code>プルリクエスト</code>）。
-          </p>
-          <form id="add-glossary-form" class="add-glossary" autocomplete="off">
-            <label class="sr-only" for="glossary-source">原語</label>
-            <input id="glossary-source" type="text" placeholder="原語" spellcheck="false" />
-            <span class="glossary-arrow" aria-hidden="true">→</span>
-            <label class="sr-only" for="glossary-target">訳語</label>
-            <input id="glossary-target" type="text" placeholder="訳語" spellcheck="false" />
-            <button class="btn" type="submit">追加</button>
-          </form>
-          <p id="add-glossary-message" class="message" hidden></p>
-          <ul id="glossary-list" class="glossary-list"></ul>
-          <button id="retranslate-all" class="btn btn-quiet" type="button" title="保存済みの訳文を破棄して翻訳し直す">
-            訳文を破棄して翻訳し直す
-          </button>
-        </section>
+        <button id="settings-summary" class="settings-summary" type="button" title="設定を開く"></button>
       </aside>
 
       <!-- ============================================== 中央: 記事一覧 -->
@@ -149,6 +99,124 @@
         </article>
       </section>
     </div>
+
+    <!-- ================================================== 設定ダイアログ -->
+    <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">設定</h2>
+        <button id="close-settings" class="btn" type="button" title="閉じる" aria-label="閉じる">
+          ✕
+        </button>
+      </div>
+
+      <div class="settings-tabs" role="tablist">
+        <button
+          class="settings-tab"
+          type="button"
+          role="tab"
+          data-tab="filters"
+          aria-selected="true"
+          aria-controls="settings-panel-filters"
+        >
+          キーワードフィルタ
+        </button>
+        <button
+          class="settings-tab"
+          type="button"
+          role="tab"
+          data-tab="translation"
+          aria-selected="false"
+          aria-controls="settings-panel-translation"
+        >
+          日本語翻訳
+        </button>
+        <button
+          class="settings-tab"
+          type="button"
+          role="tab"
+          data-tab="glossary"
+          aria-selected="false"
+          aria-controls="settings-panel-glossary"
+        >
+          用語集
+        </button>
+      </div>
+
+      <section
+        id="settings-panel-filters"
+        class="settings-panel"
+        data-panel="filters"
+        role="tabpanel"
+      >
+        <p class="hint hint-inline">
+          記事の件名・概要にキーワードが含まれるかどうかで一覧を絞り込みます。
+          「除外する」は該当記事を隠し、「含める」は該当記事だけを残します。
+        </p>
+        <form id="add-filter-form" class="add-filter" autocomplete="off">
+          <label class="sr-only" for="filter-keyword">キーワード</label>
+          <input id="filter-keyword" type="text" placeholder="キーワード" spellcheck="false" />
+          <label class="sr-only" for="filter-mode">条件</label>
+          <select id="filter-mode">
+            <option value="exclude">除外する</option>
+            <option value="include">含める</option>
+          </select>
+          <button class="btn" type="submit">追加</button>
+        </form>
+        <p id="add-filter-message" class="message" hidden></p>
+        <ul id="filter-list" class="filter-list"></ul>
+      </section>
+
+      <section
+        id="settings-panel-translation"
+        class="settings-panel"
+        data-panel="translation"
+        role="tabpanel"
+        hidden
+      >
+        <label class="check">
+          <input id="translate-enabled" type="checkbox" />
+          件名と概要を日本語で表示
+        </label>
+        <label class="check" title="フィード更新後に未翻訳の記事を自動で翻訳する">
+          <input id="translate-auto" type="checkbox" />
+          更新時に自動翻訳
+        </label>
+        <label class="check">
+          <input id="translate-show-original" type="checkbox" />
+          原文も併記
+        </label>
+        <p id="translate-status" class="translate-status"></p>
+        <button id="translate-prepare" class="btn" type="button" hidden>
+          翻訳モデルを準備
+        </button>
+      </section>
+
+      <section
+        id="settings-panel-glossary"
+        class="settings-panel"
+        data-panel="glossary"
+        role="tabpanel"
+        hidden
+      >
+        <p class="hint hint-inline">
+          訳語を固定したい技術用語を登録します（例: <code>pull request</code> →
+          <code>プルリクエスト</code>）。
+        </p>
+        <form id="add-glossary-form" class="add-glossary" autocomplete="off">
+          <label class="sr-only" for="glossary-source">原語</label>
+          <input id="glossary-source" type="text" placeholder="原語" spellcheck="false" />
+          <span class="glossary-arrow" aria-hidden="true">→</span>
+          <label class="sr-only" for="glossary-target">訳語</label>
+          <input id="glossary-target" type="text" placeholder="訳語" spellcheck="false" />
+          <button class="btn" type="submit">追加</button>
+        </form>
+        <p id="add-glossary-message" class="message" hidden></p>
+        <ul id="glossary-list" class="glossary-list"></ul>
+        <button id="retranslate-all" class="btn btn-quiet" type="button" title="保存済みの訳文を破棄して翻訳し直す">
+          訳文を破棄して翻訳し直す
+        </button>
+      </section>
+    </dialog>
 
     <script type="module" src="reader.js"></script>
   </body>

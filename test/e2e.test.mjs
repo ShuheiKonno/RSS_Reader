@@ -204,6 +204,25 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.item-row').length === 4);
   check('検索クリアで全件に戻る', true);
 
+  // --- 設定ダイアログ ---
+  check('初期状態では設定ダイアログは閉じている', !(await page.$('#settings-dialog[open]')));
+  await page.click('#open-settings');
+  await page.waitForSelector('#settings-dialog[open]');
+  check('歯車ボタンで設定ダイアログが開く', true);
+  check(
+    '既定ではキーワードフィルタのタブが選ばれている',
+    await page.isVisible('[data-panel=filters]')
+  );
+
+  await page.click('.settings-tab[data-tab=glossary]');
+  await page.waitForSelector('[data-panel=glossary]:not([hidden])');
+  check(
+    'タブ切替で用語集パネルに切り替わる',
+    (await page.isVisible('[data-panel=glossary]')) && !(await page.isVisible('[data-panel=filters]'))
+  );
+  await page.click('.settings-tab[data-tab=filters]');
+  await page.waitForSelector('[data-panel=filters]:not([hidden])');
+
   // --- キーワードフィルタ (除外) ---
   await page.fill('#filter-keyword', '広告');
   await page.selectOption('#filter-mode', 'exclude');
@@ -231,6 +250,23 @@ try {
 
   await page.click('.filter-row:nth-child(2) .icon-btn');
   await page.waitForFunction(() => document.querySelectorAll('.item-row').length === 3);
+
+  check(
+    'サイドバーのサマリにフィルタ件数が出る',
+    (await page.textContent('#settings-summary')).includes('フィルタ 1/1 件'),
+    await page.textContent('#settings-summary')
+  );
+
+  await page.click('#close-settings');
+  await page.waitForSelector('#settings-dialog[open]', { state: 'detached' });
+  check('✕ で設定ダイアログが閉じる', true);
+
+  // 背景クリックでも閉じられること
+  await page.click('#open-settings');
+  await page.waitForSelector('#settings-dialog[open]');
+  await page.mouse.click(10, 10);
+  await page.waitForSelector('#settings-dialog[open]', { state: 'detached' });
+  check('背景クリックで設定ダイアログが閉じる', true);
 
   // --- 永続化 ---
   await page.reload();
@@ -322,6 +358,10 @@ try {
   // --- 翻訳 UI ---
   // Playwright の Chromium には端末内翻訳モデルが無い想定なので、実翻訳ではなく
   // UI が描画され、未対応環境でも他の機能を壊さないことを確認する。
+  await page.click('#open-settings');
+  await page.waitForSelector('#settings-dialog[open]');
+  await page.click('.settings-tab[data-tab=translation]');
+  await page.waitForSelector('[data-panel=translation]:not([hidden])');
   await page.click('#translate-enabled');
   await page.waitForFunction(() => !document.querySelector('#translate-status').hidden);
   const translatorSupported = await page.evaluate(() => typeof Translator !== 'undefined');
@@ -335,6 +375,15 @@ try {
     '内蔵翻訳が無くても記事一覧は表示されたまま',
     (await page.$$('.item-row')).length === 3
   );
+  check(
+    'サマリに翻訳の ON/OFF が出る',
+    (await page.textContent('#settings-summary')).includes('翻訳 ON'),
+    await page.textContent('#settings-summary')
+  );
+
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#settings-dialog[open]', { state: 'detached' });
+  check('Escape で設定ダイアログが閉じる', true);
 
   // --- 記事ごとの翻訳 / 訳し直し ---
   await page.click('.item-row >> nth=0');
@@ -379,6 +428,10 @@ try {
   );
 
   // --- 用語集 ---
+  await page.click('#open-settings');
+  await page.waitForSelector('#settings-dialog[open]');
+  await page.click('.settings-tab[data-tab=glossary]');
+  await page.waitForSelector('[data-panel=glossary]:not([hidden])');
   await page.fill('#glossary-source', 'pull request');
   await page.fill('#glossary-target', 'プルリクエスト');
   await page.click('#add-glossary-form button[type=submit]');
@@ -397,6 +450,31 @@ try {
   await page.click('.glossary-row .icon-btn');
   await page.waitForFunction(() => document.querySelectorAll('.glossary-row').length === 0);
   check('用語集から削除できる', true);
+
+  // 設定ダイアログ表示中は背後の記事一覧のキー操作を止める
+  const beforeKey = await page.textContent('#preview-title');
+  await page.keyboard.press('j');
+  await page.keyboard.press('k');
+  check(
+    'ダイアログ表示中は j/k で記事が切り替わらない',
+    (await page.textContent('#preview-title')) === beforeKey
+  );
+
+  await page.screenshot({ path: path.join(SHOT, 'settings.png') });
+  await page.click('#close-settings');
+  await page.waitForSelector('#settings-dialog[open]', { state: 'detached' });
+
+  // 設定を出したあともフィード一覧が縦いっぱいを使えていること (本改修の主目的)
+  const sidebarFill = await page.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar').getBoundingClientRect().height;
+    const nav = document.querySelector('.feed-nav').getBoundingClientRect().height;
+    return nav / sidebar;
+  });
+  check(
+    'フィード一覧がサイドバーの過半を占める',
+    sidebarFill > 0.5,
+    `feed-nav / sidebar = ${sidebarFill.toFixed(2)}`
+  );
 
   await page.screenshot({ path: path.join(SHOT, 'reader.png') });
 

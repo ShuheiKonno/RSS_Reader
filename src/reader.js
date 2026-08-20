@@ -77,6 +77,12 @@ const el = {
   addGlossaryMessage: document.getElementById('add-glossary-message'),
   glossaryList: document.getElementById('glossary-list'),
   retranslateAll: document.getElementById('retranslate-all'),
+  openSettings: document.getElementById('open-settings'),
+  closeSettings: document.getElementById('close-settings'),
+  settingsDialog: document.getElementById('settings-dialog'),
+  settingsSummary: document.getElementById('settings-summary'),
+  settingsTabs: Array.from(document.querySelectorAll('.settings-tab')),
+  settingsPanels: Array.from(document.querySelectorAll('.settings-panel')),
 };
 
 /** 画面状態。state.data はストレージのスナップショット。 */
@@ -95,6 +101,8 @@ const state = {
   translatorAvailability: 'unavailable',
   // 自動翻訳で一度試した記事。失敗した記事を無限に訳し直さないための歯止め
   autoTranslateAttempted: new Set(),
+  // 設定ダイアログで選択中のタブ ('filters' | 'translation' | 'glossary')。永続化はしない
+  settingsTab: 'filters',
 };
 
 let autoMarkReadTimer = null;
@@ -610,6 +618,37 @@ function renderTranslationPanel() {
   el.translateStatus.hidden = !el.translateStatus.textContent;
 }
 
+/** サイドバー最下部に、設定画面へ移した項目の状態を 1 行で示す。 */
+function renderSettingsSummary() {
+  const filters = state.data.filters || [];
+  const enabledFilters = filters.filter((f) => f.enabled !== false).length;
+  const glossary = state.data.glossary || [];
+  const parts = [
+    filters.length === 0
+      ? 'フィルタなし'
+      : `フィルタ ${enabledFilters}/${filters.length} 件`,
+    `翻訳 ${translationSettings().enabled ? 'ON' : 'OFF'}`,
+  ];
+  if (glossary.length > 0) parts.push(`用語 ${glossary.length} 件`);
+  el.settingsSummary.textContent = `⚙ ${parts.join(' ・ ')}`;
+}
+
+/** 設定ダイアログのタブを切り替える。 */
+function selectSettingsTab(name) {
+  state.settingsTab = name;
+  for (const tab of el.settingsTabs) {
+    tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
+  }
+  for (const panel of el.settingsPanels) {
+    panel.hidden = panel.dataset.panel !== name;
+  }
+}
+
+function openSettingsDialog(tab) {
+  selectSettingsTab(tab || state.settingsTab);
+  if (!el.settingsDialog.open) el.settingsDialog.showModal();
+}
+
 function renderAll() {
   el.unreadOnly.checked = Boolean(state.data.settings.unreadOnly);
   el.autoMarkRead.checked = Boolean(state.data.settings.autoMarkRead);
@@ -618,6 +657,7 @@ function renderAll() {
   renderFilters();
   renderGlossary();
   renderTranslationPanel();
+  renderSettingsSummary();
   renderList();
   renderPreview();
 }
@@ -921,6 +961,17 @@ el.translateShowOriginal.addEventListener('change', async () => {
   await updateTranslationSettings({ showOriginal: el.translateShowOriginal.checked });
 });
 
+el.openSettings.addEventListener('click', () => openSettingsDialog());
+el.settingsSummary.addEventListener('click', () => openSettingsDialog());
+el.closeSettings.addEventListener('click', () => el.settingsDialog.close());
+// 背景 (::backdrop) のクリックで閉じる。dialog 自身が click の対象になるのは背景だけ
+el.settingsDialog.addEventListener('click', (event) => {
+  if (event.target === el.settingsDialog) el.settingsDialog.close();
+});
+for (const tab of el.settingsTabs) {
+  tab.addEventListener('click', () => selectSettingsTab(tab.dataset.tab));
+}
+
 el.retranslateAll.addEventListener('click', async () => {
   if (!confirm('保存済みの訳文をすべて破棄します。よろしいですか？')) return;
   state.autoTranslateAttempted.clear();
@@ -969,6 +1020,9 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 
 // キーボード操作
 document.addEventListener('keydown', (event) => {
+  // 設定ダイアログ表示中は背後の記事一覧を操作しない (Escape での閉じるは dialog に任せる)
+  if (el.settingsDialog.open) return;
+
   const target = event.target;
   const typing =
     target instanceof HTMLElement &&
